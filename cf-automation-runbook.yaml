@@ -29,58 +29,37 @@ Resources:
           This document adds the specified tags to the resource checked by required-tags managed rule.
 
           ## Input Parameters
-          * RequiredTags: (Required) StringMap of the tags to add to the resources.
+          * RequiredTags: (Required) StringMap of the tags to add to the resources. For example, [{'pii': 'true'},{'CostCenter': 'Security'}].
+          * ResourceID: (Required) non-compliant item ResourceID.
           * AutomationAssumeRole: (Optional) This document use the role specified in assumeRole parameter, will not use AutomationAssumeRole
-          * ConformancePackName: used to find the detail info of the non compliant resource
+          * RuleName: (Optional) Defaul config rule name is "required-tags-custom"
 
           ## Output Parameters
           * SetRequiredTags.SuccessfulResources: A list of the resources that were successfully tagged.
           * SetRequiredTags.FailedResources : A mapList of the resources where tagging failed and the reason for the failure.
         schemaVersion: '0.3'
         assumeRole: 'arn:{{global:AWS_PARTITION}}:iam::{{global:ACCOUNT_ID}}:role/TagRemediationAutomationRole'
-        outputs:
-          - SetRequiredTags.SuccessfulResources
-          - SetRequiredTags.FailedResources
         parameters:
-          RequiredTags:
-            type: StringMap
-            description: (Required) The tags to add to the resources. For example, {"company-name":"CompanyXYZ"}
-            displayType: textarea
-          ResourceID:
-            type: String
-            description: (Required) non-compliant item ResourceID.
-            displayType: textarea
-          RuleName:
-            type: String
-            description: (Required) Rule name pass to the automation.
-            displayType: textarea
           AutomationAssumeRole:
-            type: String
+            default: 'arn:aws:iam::578686640366:role/AWSAdministratorAccess'
             description: (Optional) The ARN of the role that allows Automation to perform the actions on your behalf.
-            default: ''
+            type: String
             allowedPattern: '^arn:aws(-cn|-us-gov)?:iam::\d{12}:role\/[\w+=,.@_\/-]+|^$'
+          ResourceID:
+            displayType: textarea
+            description: (Required) non-compliant item ResourceID.
+            type: String
+          RuleName:
+            displayType: textarea
+            description: (Required) Rule name pass to the automation.
+            type: String
+            default: required-tags-ec2
+          RequiredTags:
+            displayType: textarea
+            description: '(Required) The tags to add to the resources. For examle, [{''pii'': ''true''},{''CostCenter'': ''Security''}]'
+            type: String
         mainSteps:
-          - name: SetRequiredTags
-            action: 'aws:executeScript'
-            description: |
-              ## SetRequiredTags
-              Adds the specified tags to uncompliant resource checked by required-tags managed rule.
-              ## Inputs
-              * RequiredTags: (StringMap) The tags to add to the resources.
-              ## Outputs
-              * SuccessfulResources: A list of the resources that were successfully tagged.
-              * FailedResources: A mapList of the resources where tagging failed and the reason for the failure.
-            onFailure: Abort
-            isCritical: true
-            timeoutSeconds: 600
-            isEnd: true
-            inputs:
-              Runtime: python3.7
-              Handler: set_required_tags_handler
-              InputPayload:
-                RequiredTags: '{{RequiredTags}}'
-                ResourceID: '{{ResourceID}}'
-                RuleName: '{{RuleName}}'
+          - inputs:
               Script: |
                 import json
                 import boto3
@@ -90,21 +69,22 @@ Resources:
 
                   successesResources = []
                   FailedResources = []
-
+                  #tags, for example, {'pii': 'true'},{'CostCenter': 'Security'}
+                  
                   for arn in resourcesArn:
+                    for tag in tags:
                       try:
-                          response = client.tag_resources(ResourceARNList = [arn], Tags = tags)
-                          successesResources.append(arn)
+                          response = client.response = client.tag_resources(
+                            ResourceARNList=[arn],
+                            Tags=eval(tag)
+                          )
+                          successesResources.append(resourcesArn)
 
                       except Exception as e:
                         errorMsg = str(e)
-                        FailedResources.append({'ResourceArn': arn , 'error': errorMsg})
+                        FailedResources.append({'ResourceArn': resourcesArn , 'error': errorMsg})
 
-                  out = {
-                      'SuccessesResources': successesResources,
-                      'FailedResources': FailedResources
-                  }
-                  return out
+                  return
 
 
                 def set_required_tags_handler(event, context):
@@ -113,7 +93,7 @@ Resources:
                     print(event['RequiredTags'])
 
                     ResourceID = event['ResourceID']
-                    tags = event['RequiredTags']
+                    RequiredTags = event['RequiredTags']
                     RuleName = event['RuleName']
 
 
@@ -186,16 +166,31 @@ Resources:
                         print(item['arn'])
 
                     #tag the resource
-                    out = (set_required_tags(resourcesArn,tags))
-                    return out
+                    tags = RequiredTags.split(",")
+                    set_required_tags(resourcesArn,tags)
+                    return
+              Runtime: python3.7
+              InputPayload:
+                ResourceID: '{{ResourceID}}'
+                RuleName: '{{RuleName}}'
+                RequiredTags: '{{RequiredTags}}'
+              Handler: set_required_tags_handler
+            name: SetRequiredTags
+            action: 'aws:executeScript'
+            description: |
+              ## SetRequiredTags
+              Adds the specified tags to uncompliant resource checked by required-tags managed rule.
+              ## Inputs
+              * RequiredTags: (StringMap) The tags to add to the resources.
+              ## Outputs
+              * SuccessfulResources: A list of the resources that were successfully tagged.
+              * FailedResources: A mapList of the resources where tagging failed and the reason for the failure.
+            onFailure: Abort
+            timeoutSeconds: 600
+            isCritical: true
+            isEnd: true
 
-            outputs:
-              - Name: SuccessfulResources
-                Selector: $.Payload.SuccessesResources
-                Type: StringList
-              - Name: FailedResources
-                Selector: $.Payload.FailedResources
-                Type: MapList
+
       DocumentFormat: YAML
       DocumentType: Automation
       Name: 'SsmDocumentTagRemediation'
